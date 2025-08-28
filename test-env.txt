@@ -1,0 +1,2 @@
+# Test project GraphQL endpoint
+GRAPHQL_ENDPOINT=https://countries.trevorblades.com
