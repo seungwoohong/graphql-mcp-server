@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "graphql-mcp-server": {
-      "command": "node",
-      "args": ["/Users/hongseungwoo/workplace/graphql-mcp-server/dist/index.js"]
-    }
-  }
-}

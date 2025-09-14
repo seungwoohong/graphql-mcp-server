@@ -15,6 +15,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
 ENV PORT=8080
+ENV NODE_ENV=production
 USER nodeusr
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/index.js"]
 EXPOSE 8080

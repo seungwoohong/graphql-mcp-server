@@ -1,7 +1,6 @@
 import { MCPTool } from 'mcp-framework';
 import { z } from 'zod';
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import GraphQLConfig from '../config/GraphQLConfig';
 
 interface QueryInput {
   operationName: string;
@@ -12,103 +11,29 @@ class QueryTool extends MCPTool<QueryInput> {
   name = 'query';
   description = 'Execute a query by name of operation with arguments';
 
+  private config = GraphQLConfig.getInstance();
+
+  constructor() {
+    super();
+  }
+
   schema = {
     operationName: {
       type: z.string(),
       description: 'The name of the operation to execute',
     },
     arguments: {
-      type: z.record(z.any()),
+      type: z.record(z.any(), z.any()),
       description: 'The arguments to pass to the operation',
     },
   };
 
-  private findEnvFile(): string | null {
-    const clientCwd = process.env.MCP_CLIENT_CWD || process.env.PWD;
-    if (clientCwd) {
-      const envPath = join(clientCwd, '.env');
-      if (existsSync(envPath)) {
-        return envPath;
-      }
-    }
-    let currentDir = process.cwd();
-    const maxDepth = 10;
 
-    for (let i = 0; i < maxDepth; i++) {
-      const envPath = join(currentDir, '.env');
-      if (existsSync(envPath)) {
-        return envPath;
-      }
-
-      const parentDir = dirname(currentDir);
-      if (parentDir === currentDir) {
-        break;
-      }
-      currentDir = parentDir;
+  private async executeGraphQLQuery(operationName: string, arguments_: Record<string, any>): Promise<any> {
+    if (!this.config.isConfigured()) {
+      throw new Error('GraphQL endpoint and token not configured. Please use config tool first.');
     }
 
-    // 일반적인 프로젝트 루트 디렉토리들 확인
-    const commonPaths = [
-      join(process.cwd(), '..', '.env'),
-      join(process.cwd(), '..', '..', '.env'),
-      join(process.cwd(), '..', '..', '..', '.env'),
-    ];
-
-    for (const path of commonPaths) {
-      if (existsSync(path)) {
-        return path;
-      }
-    }
-
-    return null;
-  }
-
-  private getGraphQLEndpoint(): string {
-    try {
-      const envPath = this.findEnvFile();
-
-      if (!envPath) {
-        throw new Error(
-          'No .env file found in current or parent directories. Please create a .env file with GRAPHQL_ENDPOINT in your project root.'
-        );
-      }
-
-      console.log(`Found .env file at: ${envPath}`);
-      const envContent = readFileSync(envPath, 'utf-8');
-      const endpointMatch = envContent.match(/GRAPHQL_ENDPOINT\s*=\s*(.+)/);
-      if (endpointMatch) {
-        return endpointMatch[1].trim().replace(/['"]/g, '');
-      }
-
-      throw new Error('GRAPHQL_ENDPOINT not found in .env file');
-    } catch (error) {
-      throw new Error(
-        `Failed to read GraphQL endpoint from .env file: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
-  }
-
-  private getAuthToken(): string | null {
-    try {
-      const envPath = this.findEnvFile();
-      if (!envPath) {
-        return null;
-      }
-
-      const envContent = readFileSync(envPath, 'utf-8');
-      const tokenMatch = envContent.match(/GRAPHQL_TOKEN\s*=\s*(.+)/);
-      if (tokenMatch) {
-        return tokenMatch[1].trim().replace(/['"]/g, '');
-      }
-
-      return null;
-    } catch (error) {
-      console.warn('Failed to read GraphQL token from .env file:', error);
-      return null;
-    }
-  }
-
-  private async executeGraphQLQuery(endpoint: string, operationName: string, arguments_: Record<string, any>): Promise<any> {
     // GraphQL 쿼리 실행을 위한 기본 구조
     // 실제 구현에서는 introspection을 통해 쿼리 스키마를 확인하고 동적으로 쿼리를 구성해야 함
     const query = `
@@ -124,12 +49,12 @@ class QueryTool extends MCPTool<QueryInput> {
         'Content-Type': 'application/json',
       };
 
-      const token = this.getAuthToken();
+      const token = this.config.getToken();
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const response = await fetch(endpoint, {
+      const response = await fetch(this.config.getEndpoint(), {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -167,12 +92,11 @@ class QueryTool extends MCPTool<QueryInput> {
 
   async execute(input: QueryInput) {
     try {
-      const endpoint = this.getGraphQLEndpoint();
-      const result = await this.executeGraphQLQuery(endpoint, input.operationName, input.arguments);
+      const result = await this.executeGraphQLQuery(input.operationName, input.arguments);
 
       return {
         success: true,
-        endpoint,
+        endpoint: this.config.getEndpoint(),
         operationName: input.operationName,
         arguments: input.arguments,
         data: result.data,

@@ -1,7 +1,6 @@
 import { MCPTool } from 'mcp-framework';
 import { z } from 'zod';
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import GraphQLConfig from '../config/GraphQLConfig';
 
 interface SearchInput {
   operationName?: string;
@@ -45,6 +44,12 @@ class SearchTool extends MCPTool<SearchInput> {
   description =
     'Search for GraphQL operations (queries and mutations) from the configured endpoint';
 
+  private config = GraphQLConfig.getInstance();
+
+  constructor() {
+    super();
+  }
+
   schema = {
     operationName: {
       type: z.string().optional(),
@@ -53,72 +58,12 @@ class SearchTool extends MCPTool<SearchInput> {
     },
   };
 
-  private findEnvFile(): string | null {
-    const clientCwd = process.env.MCP_CLIENT_CWD || process.env.PWD;
-    if (clientCwd) {
-      const envPath = join(clientCwd, '.env');
-      if (existsSync(envPath)) {
-        return envPath;
-      }
-    }
-    let currentDir = process.cwd();
-    const maxDepth = 10;
 
-    for (let i = 0; i < maxDepth; i++) {
-      const envPath = join(currentDir, '.env');
-      if (existsSync(envPath)) {
-        return envPath;
-      }
-
-      const parentDir = dirname(currentDir);
-      if (parentDir === currentDir) {
-        break;
-      }
-      currentDir = parentDir;
+  private async fetchGraphQLSchema(): Promise<GraphQLSchema> {
+    if (!this.config.isConfigured()) {
+      throw new Error('GraphQL endpoint and token not configured. Please use config tool first.');
     }
 
-    // 3. 일반적인 프로젝트 루트 디렉토리들 확인
-    const commonPaths = [
-      join(process.cwd(), '..', '.env'),
-      join(process.cwd(), '..', '..', '.env'),
-      join(process.cwd(), '..', '..', '..', '.env'),
-    ];
-
-    for (const path of commonPaths) {
-      if (existsSync(path)) {
-        return path;
-      }
-    }
-
-    return null;
-  }
-
-  private getGraphQLEndpoint(): string {
-    try {
-      const envPath = this.findEnvFile();
-
-      if (!envPath) {
-        throw new Error(
-          'No .env file found in current or parent directories. Please create a .env file with GRAPHQL_ENDPOINT in your project root.'
-        );
-      }
-
-      console.log(`Found .env file at: ${envPath}`);
-      const envContent = readFileSync(envPath, 'utf-8');
-      const endpointMatch = envContent.match(/GRAPHQL_ENDPOINT\s*=\s*(.+)/);
-      if (endpointMatch) {
-        return endpointMatch[1].trim().replace(/['"]/g, '');
-      }
-
-      throw new Error('GRAPHQL_ENDPOINT not found in .env file');
-    } catch (error) {
-      throw new Error(
-        `Failed to read GraphQL endpoint from .env file: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
-  }
-
-  private async fetchGraphQLSchema(endpoint: string): Promise<GraphQLSchema> {
     const introspectionQuery = `
       query IntrospectionQuery {
         __schema {
@@ -153,11 +98,18 @@ class SearchTool extends MCPTool<SearchInput> {
     `;
 
     try {
-      const response = await fetch(endpoint, {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      const token = this.config.getToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(this.config.getEndpoint(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           query: introspectionQuery,
         }),
@@ -228,8 +180,7 @@ class SearchTool extends MCPTool<SearchInput> {
 
   async execute(input: SearchInput) {
     try {
-      const endpoint = this.getGraphQLEndpoint();
-      const schema = await this.fetchGraphQLSchema(endpoint);
+      const schema = await this.fetchGraphQLSchema();
       const operations = this.searchOperations(schema, input.operationName);
 
       if (operations.length === 0) {
@@ -239,7 +190,7 @@ class SearchTool extends MCPTool<SearchInput> {
       }
 
       const result = {
-        endpoint,
+        endpoint: this.config.getEndpoint(),
         totalOperations: operations.length,
         operations: operations.map(op => ({
           name: op.name,
